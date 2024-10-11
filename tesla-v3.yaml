@@ -367,7 +367,7 @@ variables:
   # To switch on charger from 2V to 230V and then ram up current, it took 16 seconds for initial_charge_current 15A.
   #wait_charger_on: 16
   # To switch on charger from 2V to 230V and then ram up current, it took 11 seconds for initial_charge_current 6A.
-  wait_charger_on: 11
+  wait_charger_on: 16
   wait_charger_off: 5
 
   # Time to wait in seconds for current to change after sending command.
