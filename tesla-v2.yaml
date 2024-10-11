@@ -35,7 +35,7 @@ blueprint:
           domain: sensor
 
     # https://github.com/home-assistant/frontend/issues/12281
-    #toggle_charge_from_grid:
+    # toggle_charge_from_grid:
     #  name: Charge from Grid Toggle
     #  description: Turn on to charge from grid at constant current.
     #  default: false
@@ -50,6 +50,18 @@ blueprint:
         entity:
           domain: input_boolean
 
+    grid_target_power_draw:
+      name: Charger target power draw when charging from grid
+      description: Specify target power draw from grid in watt
+      #default: input_boolean.telsa_model3_charge_from_grid
+      default: 3500
+      selector:
+        number:
+          min: 0
+          max: 
+          unit_of_measurement: watt
+          mode: box
+
     toggle_stop_charger:
       name: Stop charger toggle
       description: Toggle on to stop charger script (Settings > Devices & Services > Helpers > Create helper > Toggle). Delayed by "Wait grid power net update" value.
@@ -57,13 +69,6 @@ blueprint:
       selector:
         entity:
           domain: input_boolean
-
-    #stop_charger_button:
-    #  name: Stop Charger Button
-    #  description: Create helper button to stop this script when pressed (Settings > Devices & Services > Helpers > Create helper > Button).
-    #  selector:
-    #    entity:
-    #      domain: input_button
 
     charger_voltage:
       name: Charger voltage
@@ -382,11 +387,11 @@ variables:
   # Inputs
   #####################################
   charge_from_grid: !input toggle_charge_from_grid
-  #stop_charger_button_press: !input stop_charger_button
   stop_charger: !input toggle_stop_charger
   car_charger_voltage: !input charger_voltage
   car_charger_max_current: !input charger_max_current
   car_charger_min_current: !input charger_min_current
+  grid_target_power_draw: !input grid_target_power_draw
 
   # Power = Voltage * Current
   # The power step in watts to increase or decrease with 1A current change.
@@ -466,11 +471,6 @@ trigger:
   #- platform: state
   #  entity_id: !input car_binary_sensor_charging
   #  to: "on"
-
-  # Trigger action after sunrise offset.
-  - platform: sun
-    event: sunrise
-    offset: !input sunrise_offset_start_trigger
 
 condition:
 
@@ -613,21 +613,8 @@ action:
             - condition: template
               value_template: "{{ (expand(car_batterylevel_ent)[0].state | int) < (expand(car_chargelimit_ent)[0].state | int) }}"
 
-            - condition: or
-              conditions:
-
-                # Continue if charge from grid at constant current.
-                #- condition: state
-                #  entity_id: input_boolean.telsa_model3_charge_from_grid
-                #  state: "on"
-                - condition: template
-                  value_template: "{{ is_state(charge_from_grid, 'on') }}"
-
-                # Continue if within daylight hours.
-                - condition: sun
-                  after: sunrise
-                  before: sunset
-                  before_offset: !input sunset_offset_end_trigger
+            - condition: template
+              value_template: "{{ is_state(charge_from_grid, 'on') }}"
 
       sequence:
 
@@ -635,13 +622,9 @@ action:
             # For Enphase, grid_power_net is an integer in watts. Positive value means importing power from grid. Negative value means exporting power to grid.
             grid_power_net: !input sensor_grid_power_net
 
-            homebattery_power_net: !input sensor_homebattery_power_net
-            homebattery_level: !input sensor_homebattery_level
             skew: >-
               {% if skew_default <= -1 %}
                 {{ skew_default }}
-              {% elif states(homebattery_level) | float(90) < 90 %}
-                {{ -1.01 }}  
               {% else %}
                 {{ skew_default }} 
               {% endif %}
@@ -649,16 +632,13 @@ action:
         - variables:
 
             # Net power from all sources (default 0 set by float(0) if cannot convert to float).
-            all_power_net: >-
-              {% if states(homebattery_power_net) | float(0) > 0 %}
-                {{ states(grid_power_net) | float(0) + states(homebattery_power_net) | float(0) + (1 + skew_default) * one_amp_watt_step }}  
-              {% else %}
-                {{ states(grid_power_net) | float(0) }} 
-              {% endif %}
+            all_power_net: "{{ states(grid_power_net) | float(0) }}"
 
             # This can be greater than car_charger_max_current.
             # +ve => importing amp from grid, -ve => exporting amp to grid
             all_current_net: "{{ (all_power_net / one_amp_watt_step) | float }}"
+
+            target_current_net: "{{ (grid_target_power_draw / one_amp_watt_step) | float }}"
 
             # Charge current for this sequence run, including sanity check to ensure within limits.
             charge_current: >-
@@ -670,28 +650,17 @@ action:
                 {{ states(car_charging_amps) | int }}
               {% endif %}
 
+            target_current_charge: "{{ target_current_net - (all_current_net - charge_current) | float }}"
+
             # If importing from grid, will try to decrease charge current by same consumption or min charger current.
             # If exporting to grid, will try to increase charge current by same production or max charger current.
             #propose_charge_current: >-
             new_charge_current: >-
-              {% if all_current_net > 0 %}
-                {{ [car_charger_min_current, charge_current - all_current_net] | max | round(0) }}
+              {% if target_current_charge > car_charger_min_current %}
+                {{ [car_charger_max_current, target_current_charge] | min | round(0) }}
               {% else %}
-                {{ [car_charger_max_current, charge_current - all_current_net] | min | round(0) }}
+                {{ [car_charger_min_current, target_current_charge] | max | round(0) }}
               {% endif %}
-
-            # No longer required since step size is now 1A, except when switching on charger when current increment is managed by Tesla car.            
-            # Will try to increase or decrease current using step size max_allowable_current_delta only or smaller.
-            #new_charge_current: >-
-            #  {% if (charge_current - propose_charge_current) | abs > max_allowable_current_delta %}
-            #    {% if charge_current > propose_charge_current %}
-            #      {{ charge_current - max_allowable_current_delta }}
-            #    {% else %}
-            #      {{ charge_current + max_allowable_current_delta }}
-            #    {% endif %}
-            #  {% else %}
-            #    {{ propose_charge_current }}              
-            #  {% endif %}
 
         - choose:
 
@@ -766,7 +735,7 @@ action:
           # all_power_net < -69W, ie. need to increase charger current.
           - conditions:
               - condition: template
-                value_template: "{{ all_power_net < (0 + skew) * one_amp_watt_step }}"
+                value_template: "{{ all_power_net > (0 + skew) * one_amp_watt_step }}"
             sequence:
               # Gradually increase current with 1A step.
               - repeat:
