@@ -6,16 +6,17 @@
 #
 ###############################################################################
 # Objective:
-# - To charge Tesla car using excess solar and weather forecast.
+# - To charge Tesla car using off-peak grid energy.
 #
 # History:
 # 20/6/2023 Inspiration from Alphaemef's Tesla Solar Charger Blueprint 30/4/2023.
+# 11/10/2024 Added off-peak grid charging.
 ###############################################################################
 
 blueprint:
 
   name: Tesla night charger automation
-  description: To charge Tesla car using surplus solar electricity and weather forecast.
+  description: To charge Tesla car using surplus off-peak electricity.
   domain: automation
 
 ###############################################################################
@@ -44,7 +45,7 @@ blueprint:
 
     toggle_charge_from_grid:
       name: Charge from grid toggle
-      description: Toggle on to charge from grid at specified current (Settings > Devices & Services > Helpers > Create helper > Toggle). The default is to charge from solar only.
+      description: Toggle on to charge from grid at specified current (Settings > Devices & Services > Helpers > Create helper > Toggle).
       #default: input_boolean.telsa_model3_charge_from_grid
       selector:
         entity:
@@ -94,7 +95,7 @@ blueprint:
 
     charger_min_current:
       name: Charger minimum current
-      description: Specify the minimum charging current to keep charging the car when there is no excess solar electricity. The default is 0 Ampere.
+      description: Specify the minimum charging current to keep charging the car. The default is 0 Ampere.
       default: 0
       selector:
         number:
@@ -501,15 +502,6 @@ action:
       entity_id: !input car_button_forceupdate_ha
   - delay: "{{ wait_command_execute }}"
 
-  # Save current Tesla parameters for later restore.
-  - service: scene.create
-    data:
-      scene_id: tesla_solar_charger_script_scene
-      snapshot_entities:
-        - !input car_number_charge_limit
-        - !input car_number_charging_amps
-  - delay: "{{ wait_command_execute }}"
-
   # Should honour existing charge limit set by app or car, unless charge limit for day is set.
   # If charge limit for day is not set, ie. set to -1, charge limit will be set according to the Tesla app.
   # If charge limit for day is set and charge car based on weather is disabled, charge limit will be set according to the limit configured for the day.
@@ -707,11 +699,6 @@ action:
                 entity_id: !input car_binary_sensor_charging
                 state: "off"
             sequence:
-              # Restore previous settings.
-              - service: scene.turn_on
-                target:
-                  entity_id: scene.tesla_solar_charger_script_scene
-              - delay: "{{ wait_command_execute }}"
 
               # Get the latest data from Tesla to update HA before exiting script.
               - service: button.press
@@ -807,12 +794,6 @@ action:
         target:
           entity_id: !input car_switch_charger
       - delay: "{{ wait_charger_off }}"
-
-  # Restore previous settings.
-  - service: scene.turn_on
-    target:
-      entity_id: scene.tesla_solar_charger_script_scene
-  - delay: "{{ wait_command_execute }}"
 
   # Get the latest data from Tesla to update HA before exiting script.
   - service: button.press
