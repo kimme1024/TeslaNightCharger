@@ -679,7 +679,7 @@ action:
                     # Only set initial current if charging from solar, otherwise charge from grid using current set by user enforcing current limits.
                     - if:
                         - condition: template
-                          value_template: "{{ is_state(charge_from_grid, 'off') }}"
+                          value_template: "{{ is_state(charge_from_grid, 'on') }}"
                       then:
                         - service: number.set_value
                           data:
@@ -728,14 +728,14 @@ action:
           # Toggled to charge from grid at current specified in app.
           - conditions:
               - condition: template
-                value_template: "{{ is_state(charge_from_grid, 'on') }}"
+                value_template: "{{ is_state(charge_from_grid, 'off') }}"
             sequence:
               - delay: "00:00:00"
 
           # all_power_net < -69W, ie. need to increase charger current.
           - conditions:
               - condition: template
-                value_template: "{{ all_power_net > (0 + skew) * one_amp_watt_step }}"
+                value_template: "{{ new_charge_current > charge_current }}"
             sequence:
               # Gradually increase current with 1A step.
               - repeat:
@@ -751,7 +751,7 @@ action:
           # all_power_net >= 161W, ie. need to decrease charger current.
           - conditions:
               - condition: template
-                value_template: "{{ all_power_net >= (1 + skew) * one_amp_watt_step }}"
+                value_template: "{{ new_charge_current < charge_current }}"
             sequence:
               # Gradually decrease current with 1A step.
               - repeat:
@@ -763,13 +763,6 @@ action:
                       target:
                         entity_id: !input car_number_charging_amps
                     - delay: "{{ wait_current_change }}"
-
-          # 161 > all_power_net >= -69W, ie. do nothing.
-          - conditions:
-              - condition: template
-                value_template: "{{ (1 + skew) * one_amp_watt_step > all_power_net >= (0 + skew) * one_amp_watt_step }}"
-            sequence:
-              - delay: "00:00:00"
 
 
         # Get the latest data from Tesla to update HA.
