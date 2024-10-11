@@ -58,6 +58,7 @@ blueprint:
       selector:
         number:
           min: 0
+          max: 7200
           unit_of_measurement: watt
           mode: box
 
